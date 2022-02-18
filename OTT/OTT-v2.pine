@@ -1,0 +1,114 @@
+//@version=4
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+
+// VIDYA and CMO created by Tushar S. Chande
+// OTT created by  Anıl Özekşi - @Anil_Ozeksi
+// Author: Kıvanç Özbilgiç - @kivancozbilgic
+// Author and Strategy: Tuğrul Kaşıkcı - @tugrulkasikci
+
+// Inputs
+strategy(title="Optimized Trend Tracker v2", shorttitle="OTT v2", overlay=true, currency="USD", initial_capital=1000, commission_value=0.04, default_qty_type=strategy.percent_of_equity, default_qty_value=100, margin_long=1.35, margin_short=1.35)
+src = input(close, title="Source", group="OTT")
+length=input(40, "OTT Period", minval=1, group="OTT")
+percent=input(1, "OTT Percent", type=input.float, step=0.25, minval=0, group="OTT")
+showsupport = input(title="Show Support Line?", type=input.bool, defval=true, group="OTT")
+showsignalsk = input(title="Show Support Line Crossing Signals?", type=input.bool, defval=true, group="OTT")
+mav = input(title="Moving Average Type", defval="VAR", options=["VAR"], group="OTT")
+
+// CMO and VIDYA
+Var_Func(src,length)=>
+    valpha=2/(length+1)
+    vud1=src>src[1] ? src-src[1] : 0
+    vdd1=src<src[1] ? src[1]-src : 0
+    vUD=sum(vud1,9)
+    vDD=sum(vdd1,9)
+    vCMO=nz((vUD-vDD)/(vUD+vDD))
+    VAR=0.0
+    VAR:=nz(valpha*abs(vCMO)*src)+(1-valpha*abs(vCMO))*nz(VAR[1])
+VAR=Var_Func(src,length)
+
+getMA(src, length) =>
+    ma = 0.0
+    if mav == "VAR"
+        ma := VAR
+        ma
+    ma
+MAvg=getMA(src, length)
+
+// OTT
+fark=MAvg*percent*0.01
+longStop = MAvg - fark
+longStopPrev = nz(longStop[1], longStop)
+longStop := MAvg > longStopPrev ? max(longStop, longStopPrev) : longStop
+shortStop =  MAvg + fark
+shortStopPrev = nz(shortStop[1], shortStop)
+shortStop := MAvg < shortStopPrev ? min(shortStop, shortStopPrev) : shortStop
+dir = 1
+dir := nz(dir[1], dir)
+dir := dir == -1 and MAvg > shortStopPrev ? 1 : dir == 1 and MAvg < longStopPrev ? -1 : dir
+MT = dir==1 ? longStop: shortStop
+OTT=MAvg>MT ? MT*(200+percent)/200 : MT*(200-percent)/200
+
+// Draw chart
+plot(showsupport ? MAvg : na, color=color.rgb(33, 150, 243, 0), linewidth=2, title="Support Line")
+pALL=plot(nz(OTT[2]), color=color.rgb(255, 82, 82, 0), linewidth=2, title="OTT")
+
+// Signal conditions
+buySignalk = crossover(MAvg, OTT[2])
+plotshape(buySignalk and showsignalsk ? OTT*0.995 : na, title="Buy", text="Buy", location=location.absolute, style=shape.labelup, size=size.tiny, color=color.rgb(76, 175, 80, 0), textcolor=color.rgb(255, 255, 255, 0))
+sellSignalk = crossunder(MAvg, OTT[2])
+plotshape(sellSignalk and showsignalsk ? OTT*1.005 : na, title="Sell", text="Sell", location=location.absolute, style=shape.labeldown, size=size.tiny, color=color.rgb(255, 82, 82, 0), textcolor=color.rgb(255, 255, 255, 0))
+mPlot = plot(ohlc4, title="", style=plot.style_circles, linewidth=0,display=display.none)
+
+// Backtest time range
+FromDay    = input(defval = 12, title = "From Day", minval = 1, maxval = 31, group="BACKTEST TIME RANGE")
+FromMonth  = input(defval = 7, title = "From Month", minval = 1, maxval = 12, group="BACKTEST TIME RANGE")
+FromYear   = input(defval = 2021, title = "From Year", minval = 2005, group="BACKTEST TIME RANGE")
+ToDay      = input(defval = 1, title = "To Day", minval = 1, maxval = 31, group="BACKTEST TIME RANGE")
+ToMonth    = input(defval = 1, title = "To Month", minval = 1, maxval = 12, group="BACKTEST TIME RANGE")
+ToYear     = input(defval = 9999, title = "To Year", minval = 2006, group="BACKTEST TIME RANGE")
+Start     = timestamp(FromYear, FromMonth, FromDay, 00, 00)
+Finish    = timestamp(ToYear, ToMonth, ToDay, 23, 59)
+Timerange() =>
+    time >= Start and time <= Finish ? true : false
+
+// Max losing streak protection
+max_losing_streak = input(title="Max Losing Streak", type=input.integer, defval=7, minval=1, group="STRATEGY STOP LOSS")
+new_loss = (strategy.losstrades > strategy.losstrades[1]) and (strategy.wintrades == strategy.wintrades[1]) and (strategy.eventrades == strategy.eventrades[1])
+streak_len = 0
+
+streak_len := if (new_loss)
+    nz(streak_len[1]) + 1
+else
+    if (strategy.wintrades > strategy.wintrades[1]) or (strategy.eventrades > strategy.eventrades[1])
+        0
+    else
+        nz(streak_len[1])
+
+ok_to_trade = streak_len < max_losing_streak
+
+// Alert message inputs - UI alert message example = Bot {{exchange}} exhange {{ticker}} pairs {{timenow}} time {{close}} USDT {{strategy.order.alert_message}}
+message_long_entry  = input(title = "Long Alert Message", defval="Long Alert Message", group="ALERT MESSAGES")
+message_long_close   = input(title = "Close Long Alert Message", defval="Close Long Alert Message", group="ALERT MESSAGES")
+message_short_entry = input(title = "Short Alert Message", defval="Short Alert Message", group="ALERT MESSAGES")
+message_short_close  = input(title = "Close Short Alert Message", defval="Close Short Alert Message", group="ALERT MESSAGES")
+message_mayna = input(title = "Strategy Stop Message", defval="Strategy Stop Message", group="ALERT MESSAGES")
+
+// Max drawdown protection
+max_drawdown = input(title="Max Drawdown %", type=input.integer, defval=33, minval=1, group="STRATEGY STOP LOSS")
+strategy.risk.max_drawdown(value=max_drawdown, type=strategy.percent_of_equity, alert_message = message_mayna)
+
+// Entry orders
+if ok_to_trade and (buySignalk and OTT*0.995)
+    strategy.entry(id="LONG", long=true, when=Timerange(), alert_message = message_long_entry)
+
+if ok_to_trade and (sellSignalk and OTT*1.005)
+    strategy.entry(id="SHORT", long=false, when=Timerange(), alert_message = message_short_entry)
+    
+// Close orders
+strategy.close(id="LONG", when=sellSignalk and OTT*1.005, alert_message = message_long_close)
+strategy.close(id="SHORT", when=buySignalk and OTT*0.995, alert_message = message_short_close)
+
+// Mayna
+if (not ok_to_trade)
+    strategy.close_all(alert_message = message_mayna)
