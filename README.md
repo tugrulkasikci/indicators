@@ -1,3 +1,3 @@
-# Tradingview indicators and strategies.
+# Tradingview Indicators and Strategies
 
 Stock data is highly stochastic. (a random process)
